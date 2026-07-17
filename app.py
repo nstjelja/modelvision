@@ -1,3 +1,4 @@
+import html
 import os
 
 import requests
@@ -7,8 +8,107 @@ API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000")
 IMAGES_PER_PAGE = 12
 COLUMNS = 4
 THUMB_SIZE = 160
+PREVIEW_SIZE = 320
+TILE_BORDER_WIDTH = 3
+TILE_PADDING = 4
+SELECTED_BORDER = f"{TILE_BORDER_WIDTH}px solid #1E90FF"
+TILE_UNSELECTED_BORDER = f"{TILE_BORDER_WIDTH}px solid transparent"
+PREVIEW_BORDER = "1px solid #ddd"
+TILE_WIDTH = THUMB_SIZE + 2 * TILE_PADDING + 2 * TILE_BORDER_WIDTH
+GRID_GAP = 16
+GRID_WIDTH = COLUMNS * TILE_WIDTH + (COLUMNS - 1) * GRID_GAP
+NAV_BUTTON_WIDTH = 110
 
 st.set_page_config(page_title="ModelVision", layout="wide")
+
+st.markdown(
+    f"""
+    <style>
+    .stButton > button {{
+        background-color: #1E90FF;
+        color: white;
+        border-color: #1E90FF;
+    }}
+    .stButton > button:hover {{
+        background-color: #1876D1;
+        border-color: #1876D1;
+        color: white;
+    }}
+    .img-box {{
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        background-color: #f0f0f0;
+        box-sizing: border-box;
+    }}
+    .img-box img {{
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+    }}
+    div[class*="st-key-tile"] button {{
+        padding: {TILE_PADDING}px;
+        background-color: #f0f0f0;
+        border: {TILE_UNSELECTED_BORDER};
+    }}
+    div[class*="st-key-tile"] button img {{
+        width: {THUMB_SIZE}px !important;
+        height: {THUMB_SIZE}px !important;
+        max-width: {THUMB_SIZE}px !important;
+        max-height: {THUMB_SIZE}px !important;
+        object-fit: contain !important;
+        display: block !important;
+    }}
+    div[class*="st-key-tile-selected_"] button {{
+        background-color: #f0f0f0;
+        border: {SELECTED_BORDER};
+    }}
+    div[class*="st-key-gallery_grid"] {{
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: wrap !important;
+        gap: {GRID_GAP}px;
+        width: {GRID_WIDTH}px;
+    }}
+    div[class*="st-key-gallery_grid"] > div[data-testid="stElementContainer"] {{
+        flex: 0 0 auto !important;
+        width: {TILE_WIDTH}px !important;
+    }}
+    div[class*="st-key-nav_row"] {{
+        display: flex !important;
+        flex-direction: row !important;
+        justify-content: space-between;
+        align-items: center;
+        width: {GRID_WIDTH}px;
+    }}
+    div[class*="st-key-nav_row"] > div[data-testid="stElementContainer"] {{
+        flex: 0 0 auto !important;
+        width: auto !important;
+    }}
+    div[class*="st-key-nav_prev"] button, div[class*="st-key-nav_next"] button {{
+        width: {NAV_BUTTON_WIDTH}px;
+    }}
+    .page-label {{
+        width: {GRID_WIDTH}px;
+        text-align: center;
+        margin-top: 0.5rem;
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def render_fixed_image(url: str, size: int, border: str = PREVIEW_BORDER):
+    st.markdown(
+        f"""
+        <div class="img-box" style="width:{size}px;height:{size}px;border:{border};">
+            <img src="{html.escape(url, quote=True)}">
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 if "page" not in st.session_state:
     st.session_state.page = 0
@@ -18,17 +118,17 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 
+def select_image(image_id: str):
+    if st.session_state.selected_image != image_id:
+        st.session_state.selected_image = image_id
+        st.session_state.chat_history = []
+
+
 @st.cache_data(ttl=60)
 def fetch_images():
     resp = requests.get(f"{API_URL}/images/list", timeout=30)
     resp.raise_for_status()
     return resp.json()
-
-
-def select_image(image_id: str):
-    if st.session_state.selected_image != image_id:
-        st.session_state.selected_image = image_id
-        st.session_state.chat_history = []
 
 
 st.title("Image Gallery")
@@ -46,36 +146,32 @@ if not images:
 total_pages = max(1, (len(images) - 1) // IMAGES_PER_PAGE + 1)
 st.session_state.page = min(st.session_state.page, total_pages - 1)
 
-nav_prev, nav_label, nav_next = st.columns([1, 2, 1])
-with nav_prev:
-    if st.button("Previous", disabled=st.session_state.page <= 0):
+with st.container(key="nav_row"):
+    if st.button("Previous", key="nav_prev", disabled=st.session_state.page <= 0):
         st.session_state.page -= 1
         st.rerun()
-with nav_label:
-    st.markdown(
-        f"<div style='text-align:center'>Page {st.session_state.page + 1} of {total_pages}</div>",
-        unsafe_allow_html=True,
-    )
-with nav_next:
-    if st.button("Next", disabled=st.session_state.page >= total_pages - 1):
+    if st.button("Next", key="nav_next", disabled=st.session_state.page >= total_pages - 1):
         st.session_state.page += 1
         st.rerun()
 
 start = st.session_state.page * IMAGES_PER_PAGE
 page_images = images[start:start + IMAGES_PER_PAGE]
 
-cols = st.columns(COLUMNS)
-for i, image in enumerate(page_images):
-    with cols[i % COLUMNS]:
-        st.image(image["url"], width=THUMB_SIZE)
+with st.container(key="gallery_grid"):
+    for image in page_images:
         is_selected = st.session_state.selected_image == image["id"]
+        key_prefix = "tile-selected" if is_selected else "tile"
         st.button(
-            "Selected" if is_selected else "Select",
-            key=f"select_{image['id']}",
-            disabled=is_selected,
+            f"![{image['id']}]({image['url']})",
+            key=f"{key_prefix}_{image['id']}",
             on_click=select_image,
             args=(image["id"],),
         )
+
+st.markdown(
+    f"<div class='page-label'>Page {st.session_state.page + 1} of {total_pages}</div>",
+    unsafe_allow_html=True,
+)
 
 with st.sidebar:
     st.header("Chat")
@@ -88,7 +184,7 @@ with st.sidebar:
         )
         st.subheader(st.session_state.selected_image)
         if selected:
-            st.image(selected["url"], width="stretch")
+            render_fixed_image(selected["url"], PREVIEW_SIZE)
 
         for turn in st.session_state.chat_history:
             with st.chat_message(turn["role"]):
